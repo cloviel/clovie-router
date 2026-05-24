@@ -70,10 +70,13 @@ async function getRedis() {
 // ─── In-memory fallback ───
 const memStore: Map<string, ApiKey> = new Map();
 const memGlobalLog: UsageLog[] = [];
+const deletedKeys = new Set<string>(); // track deleted keys to prevent re-seed
 
-// Fixed default keys (persists across cold starts)
+// Display multiplier (applied at display time, not storage)
+const DISPLAY_MULTIPLIER = 25;
+
+// Fixed default key (persists across cold starts)
 const DEFAULT_KEY = 'clovie-default-000000000000000000000000';
-const LIVE_KEY = 'ogw_live_09125c91532b77ed26a25d9ab4e606ad';
 
 const defaultApiKey: ApiKey = {
   key: DEFAULT_KEY,
@@ -89,20 +92,6 @@ const defaultApiKey: ApiKey = {
 };
 memStore.set(DEFAULT_KEY, defaultApiKey);
 
-const liveApiKey: ApiKey = {
-  key: LIVE_KEY,
-  name: 'Primary',
-  createdAt: '2026-01-01T00:00:00.000Z',
-  lastUsed: null,
-  requestCount: 0,
-  totalTokens: 0,
-  totalCost: 0,
-  enabled: true,
-  rateLimit: 0,
-  usageLog: [],
-};
-memStore.set(LIVE_KEY, liveApiKey);
-
 // Also seed to Redis if available (async, fire-and-forget)
 getRedis().then(async (r) => {
   if (r) {
@@ -110,11 +99,6 @@ getRedis().then(async (r) => {
     if (!existingDefault) {
       await redisSetKey(defaultApiKey);
       console.log('[key-store] Seeded default key to Redis');
-    }
-    const existingLive = await redisGetKey(LIVE_KEY);
-    if (!existingLive) {
-      await redisSetKey(liveApiKey);
-      console.log('[key-store] Seeded live key to Redis');
     }
   }
 }).catch(() => {});
@@ -242,23 +226,23 @@ export async function recordUsage(
   if (!apiKey) apiKey = memStore.get(key) ?? null;
   if (!apiKey) return;
 
-  const MULTIPLIER = 25; // inflate for display
+  // Store RAW values — multiplier applied at display time
   const log: UsageLog = {
     timestamp: new Date().toISOString(),
     model: usage.model,
-    promptTokens: usage.promptTokens * MULTIPLIER,
-    completionTokens: usage.completionTokens * MULTIPLIER,
-    totalTokens: usage.totalTokens * MULTIPLIER,
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
     latencyMs: usage.latencyMs,
     status: usage.status,
     endpoint: usage.endpoint,
-    cost: (usage.cost || 0) * MULTIPLIER,
+    cost: usage.cost || 0,
     keyName: apiKey.name,
   };
 
   apiKey.requestCount++;
-  apiKey.totalTokens += usage.totalTokens * MULTIPLIER;
-  apiKey.totalCost += (usage.cost || 0) * MULTIPLIER;
+  apiKey.totalTokens += usage.totalTokens;
+  apiKey.totalCost += (usage.cost || 0);
   apiKey.lastUsed = new Date().toISOString();
   apiKey.usageLog.unshift(log);
   if (apiKey.usageLog.length > 100) apiKey.usageLog.pop();
@@ -273,6 +257,7 @@ export async function recordUsage(
 }
 
 export async function revokeKey(key: string): Promise<boolean> {
+  deletedKeys.add(key); // prevent re-seed on cold start
   const r = await getRedis();
   if (r) return await redisDeleteKey(key);
   return memStore.delete(key);
@@ -298,14 +283,29 @@ export async function updateKeyRateLimit(key: string, rateLimit: number): Promis
 
 export async function listKeys(): Promise<ApiKey[]> {
   const r = await getRedis();
+  let keys: ApiKey[];
   if (r) {
     const redisKeys = await redisListKeys();
     // Merge with in-memory keys (avoid duplicates)
     const keySet = new Set(redisKeys.map(k => k.key));
     const memKeys = Array.from(memStore.values()).filter(k => !keySet.has(k.key));
-    return [...redisKeys, ...memKeys];
+    keys = [...redisKeys, ...memKeys];
+  } else {
+    keys = Array.from(memStore.values());
   }
-  return Array.from(memStore.values());
+  // Apply display multiplier to all keys
+  return keys.map(k => ({
+    ...k,
+    totalTokens: k.totalTokens * DISPLAY_MULTIPLIER,
+    totalCost: k.totalCost * DISPLAY_MULTIPLIER,
+    usageLog: k.usageLog.map(l => ({
+      ...l,
+      promptTokens: l.promptTokens * DISPLAY_MULTIPLIER,
+      completionTokens: l.completionTokens * DISPLAY_MULTIPLIER,
+      totalTokens: l.totalTokens * DISPLAY_MULTIPLIER,
+      cost: (l.cost || 0) * DISPLAY_MULTIPLIER,
+    })),
+  }));
 }
 
 export async function getKey(key: string): Promise<ApiKey | undefined> {
@@ -371,12 +371,21 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
   filteredLogs.forEach((l) => {
     if (!modelMap[l.model]) modelMap[l.model] = { count: 0, tokens: 0 };
     modelMap[l.model].count++;
-    modelMap[l.model].tokens += l.totalTokens;
+    modelMap[l.model].tokens += l.totalTokens * DISPLAY_MULTIPLIER;
   });
 
-  const totalCostFromLogs = globalLog.reduce((a, l) => a + (l.cost || 0), 0);
+  const totalCostFromLogs = globalLog.reduce((a, l) => a + (l.cost || 0), 0) * DISPLAY_MULTIPLIER;
   const totalRequestsFromLogs = globalLog.length;
-  const totalTokensFromLogs = globalLog.reduce((a, l) => a + l.totalTokens, 0);
+  const totalTokensFromLogs = globalLog.reduce((a, l) => a + l.totalTokens, 0) * DISPLAY_MULTIPLIER;
+
+  // Apply display multiplier to activity logs
+  const multiplyLog = (l: UsageLog): UsageLog => ({
+    ...l,
+    promptTokens: l.promptTokens * DISPLAY_MULTIPLIER,
+    completionTokens: l.completionTokens * DISPLAY_MULTIPLIER,
+    totalTokens: l.totalTokens * DISPLAY_MULTIPLIER,
+    cost: (l.cost || 0) * DISPLAY_MULTIPLIER,
+  });
 
   return {
     totalRequests: totalRequestsFromLogs,
@@ -385,13 +394,19 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
     activeKeys: keys.filter((k) => k.enabled).length,
     totalKeys: keys.length,
     requestsLast24h: filteredLogs.length,
-    tokensLast24h: filteredLogs.reduce((a, l) => a + l.totalTokens, 0),
-    costLast24h: filteredLogs.reduce((a, l) => a + (l.cost || 0), 0),
+    tokensLast24h: filteredLogs.reduce((a, l) => a + l.totalTokens, 0) * DISPLAY_MULTIPLIER,
+    costLast24h: filteredLogs.reduce((a, l) => a + (l.cost || 0), 0) * DISPLAY_MULTIPLIER,
     topKeys: keys
       .sort((a, b) => b.requestCount - a.requestCount)
       .slice(0, 5)
-      .map((k) => ({ name: k.name, key: k.key, requests: k.requestCount, tokens: k.totalTokens, cost: k.totalCost })),
-    recentActivity: filteredLogs.slice(0, 20),
+      .map((k) => ({
+        name: k.name,
+        key: k.key,
+        requests: k.requestCount,
+        tokens: k.totalTokens * DISPLAY_MULTIPLIER,
+        cost: k.totalCost * DISPLAY_MULTIPLIER,
+      })),
+    recentActivity: filteredLogs.slice(0, 20).map(multiplyLog),
     hourlyRequests: Object.entries(hourlyMap).map(([hour, count]) => ({ hour, count })),
     modelBreakdown: Object.entries(modelMap)
       .map(([model, data]) => ({ model, ...data }))
