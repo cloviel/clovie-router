@@ -1,0 +1,12 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "installCommand": "npm install",
+  "env": {
+    "UPSTREAM_BASE_URL": "https://opengateway.gitlawb.com/v1/xiaomi-mimo",
+    "UPSTREAM_API_KEY": "ogw_live_09125c91532b77ed26a25d9ab4e606ad",
+    "ADMIN_SECRET": "clovie-admin-2026",
+    "NEXT_PUBLIC_ADMIN_SECRET": "clovie-admin-2026",
+    "NEXT_PUBLIC_UPSTREAM": "opengateway.gitlawb.com"
+  }
+}

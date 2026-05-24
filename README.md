@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OGW Router
 
-## Getting Started
+OpenAI-compatible API gateway that proxies to upstream LLM providers.
 
-First, run the development server:
+## Features
+
+- 🔑 **API Key Management** — Generate, revoke, toggle keys via dashboard
+- 🔄 **Transparent Proxy** — Forwards `/v1/chat/completions`, `/v1/models`, etc.
+- 🌊 **Streaming Support** — Full SSE streaming passthrough
+- 🎨 **Premium Dashboard** — Dark theme with animated mesh background
+- 🚀 **Vercel Ready** — One-click deploy
+
+## Quick Start
 
 ```bash
+# Install
+npm install
+
+# Configure .env.local
+UPSTREAM_BASE_URL=https://opengateway.gitlawb.com/v1/xiaomi-mimo
+UPSTREAM_API_KEY=ogw_live_...
+ADMIN_SECRET=your-admin-secret
+
+# Run
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Usage
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Generate a key via dashboard at http://localhost:3000
+# Then use it:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+curl https://your-domain.vercel.app/v1/chat/completions \
+  -H "Authorization: Bearer ogw-your-generated-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mimo-v2.5-pro",
+    "messages": [{"role": "user", "content": "hello"}]
+  }'
+```
 
-## Learn More
+## Deploy to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx vercel --prod
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Set environment variables in Vercel dashboard:
+- `UPSTREAM_BASE_URL` — Upstream API base URL
+- `UPSTREAM_API_KEY` — Upstream API key
+- `ADMIN_SECRET` — Dashboard access secret
+- `NEXT_PUBLIC_ADMIN_SECRET` — Same as ADMIN_SECRET (for client)
+- `NEXT_PUBLIC_UPSTREAM` — Display name of upstream
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Endpoints
 
-## Deploy on Vercel
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/chat/completions` | Chat completions (streaming) |
+| GET | `/v1/models` | List available models |
+| GET | `/api/admin/keys` | List API keys (admin) |
+| POST | `/api/admin/keys` | Generate new key (admin) |
+| DELETE | `/api/admin/keys` | Revoke key (admin) |
+| PATCH | `/api/admin/keys` | Toggle key (admin) |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Architecture
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+Client → OGW Router (your base URL)
+           ├── Validates API key (ogw-xxx)
+           ├── Swaps for upstream key
+           ├── Forwards to upstream
+           └── Returns response (JSON/SSE)
+```
