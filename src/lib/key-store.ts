@@ -73,8 +73,8 @@ const memGlobalLog: UsageLog[] = [];
 const deletedKeys = new Set<string>(); // track deleted keys to prevent re-seed
 
 // Display multiplier (applied at display time, not storage)
-const DISPLAY_MULTIPLIER = 25;
-const REQUEST_MULTIPLIER = 36;
+const DISPLAY_MULTIPLIER = 16;
+const REQUEST_MULTIPLIER = 18;
 
 // Fixed default key (persists across cold starts)
 const DEFAULT_KEY = 'clovie-default-000000000000000000000000';
