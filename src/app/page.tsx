@@ -66,6 +66,7 @@ export default function Dashboard() {
   const [tab, setTab] = useState<Tab>('overview');
   const [baseUrl, setBaseUrl] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [period, setPeriod] = useState('1d');
 
   useEffect(() => {
     setBaseUrl(window.location.origin + '/v1');
@@ -91,10 +92,10 @@ export default function Dashboard() {
   const fetchStats = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/admin/stats', { headers });
+      const res = await fetch(`/api/admin/stats?period=${period}`, { headers });
       if (res.ok) setStats(await res.json());
     } catch { /* ignore */ }
-  }, [token, headers]);
+  }, [token, headers, period]);
 
   const fetchModels = useCallback(async () => {
     setModelsLoading(true);
@@ -254,12 +255,13 @@ export default function Dashboard() {
   }
 
   // ─── DASHBOARD ───
+  const periodLabel = period === '1d' ? '24h' : period === '7d' ? '7D' : period === '1m' ? '1B' : 'ALL';
   const statCards = stats ? [
     { label: 'Total Requests', value: fmtNum(stats.totalRequests), color: 'text-emerald-400' },
-    { label: 'Requests (24h)', value: fmtNum(stats.requestsLast24h), color: 'text-blue-400' },
+    { label: `Requests (${periodLabel})`, value: fmtNum(stats.requestsLast24h), color: 'text-blue-400' },
     { label: 'Total Tokens', value: fmtNum(stats.totalTokens), color: 'text-purple-400' },
     { label: 'Total Cost', value: '$' + stats.totalCost.toFixed(6), color: 'text-amber-400' },
-    { label: 'Cost (24h)', value: '$' + (stats.costLast24h || 0).toFixed(6), color: 'text-yellow-400' },
+    { label: `Cost (${periodLabel})`, value: '$' + (stats.costLast24h || 0).toFixed(6), color: 'text-yellow-400' },
     { label: 'Active Keys', value: String(stats.activeKeys), color: 'text-green-400' },
   ] : [];
 
@@ -334,6 +336,26 @@ export default function Dashboard() {
 
           {/* ─── OVERVIEW TAB ─── */}
           {tab === 'overview' && <>
+            {/* Period selector */}
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Overview</h3>
+              <div className="flex gap-1 bg-white/[0.03] rounded-lg p-1">
+                {[
+                  { key: '1d', label: '1D' },
+                  { key: '7d', label: '7D' },
+                  { key: '1m', label: '1B' },
+                  { key: 'all', label: 'ALL' },
+                ].map((p) => (
+                  <button key={p.key} onClick={() => setPeriod(p.key)}
+                    className={`px-2.5 py-1 text-[10px] sm:text-xs rounded-md font-medium transition-all ${
+                      period === p.key ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-500 hover:text-slate-300'
+                    }`}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Stat cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
               {statCards.map((s, i) => (
@@ -347,13 +369,13 @@ export default function Dashboard() {
             {/* Charts row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
               <div className="glass-card p-4 sm:p-5 stagger-in" style={{ animationDelay: '0.3s' }}>
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Requests (24h)</h3>
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Requests ({periodLabel})</h3>
                 {stats && (
                   <BarChart data={stats.hourlyRequests.map(h => ({ label: h.hour.slice(11) + 'h', value: h.count }))} />
                 )}
               </div>
               <div className="glass-card p-4 sm:p-5 stagger-in" style={{ animationDelay: '0.4s' }}>
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Top Models (24h)</h3>
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Top Models ({periodLabel})</h3>
                 <div className="space-y-2">
                   {stats?.modelBreakdown.slice(0, 5).map((m, i) => (
                     <div key={m.model} className="flex items-center gap-2 sm:gap-3">

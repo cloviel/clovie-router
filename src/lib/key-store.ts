@@ -294,32 +294,58 @@ export async function getKey(key: string): Promise<ApiKey | undefined> {
   return memStore.get(key);
 }
 
-export async function getStats(): Promise<UsageStats> {
+export async function getStats(period: string = '1d'): Promise<UsageStats> {
   const r = await getRedis();
   const keys = r ? await redisListKeys() : Array.from(memStore.values());
   const globalLog = r ? await redisGetGlobalLog() : [...memGlobalLog];
   const now = Date.now();
-  const h24 = now - 86400000;
 
-  const recentLogs = globalLog.filter(
-    (l) => new Date(l.timestamp).getTime() > h24
-  );
+  // Period filter
+  let periodMs = 86400000; // 1d default
+  if (period === '7d') periodMs = 7 * 86400000;
+  else if (period === '1m') periodMs = 30 * 86400000;
+  else if (period === 'all') periodMs = Infinity;
 
-  // Hourly breakdown (last 24h)
+  const filteredLogs = period === 'all'
+    ? globalLog
+    : globalLog.filter((l) => new Date(l.timestamp).getTime() > (now - periodMs));
+
+  // Hourly breakdown
   const hourlyMap: Record<string, number> = {};
-  for (let i = 23; i >= 0; i--) {
-    const d = new Date(now - i * 3600000);
-    const label = d.toISOString().slice(0, 13);
-    hourlyMap[label] = 0;
+  if (period === '1d') {
+    for (let i = 23; i >= 0; i--) {
+      const d = new Date(now - i * 3600000);
+      const label = d.toISOString().slice(0, 13);
+      hourlyMap[label] = 0;
+    }
+  } else if (period === '7d') {
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now - i * 86400000);
+      const label = d.toISOString().slice(0, 10);
+      hourlyMap[label] = 0;
+    }
+  } else if (period === '1m') {
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now - i * 86400000);
+      const label = d.toISOString().slice(0, 10);
+      hourlyMap[label] = 0;
+    }
+  } else {
+    // ALL: group by day from first log
+    const days = new Set<string>();
+    globalLog.forEach((l) => days.add(l.timestamp.slice(0, 10)));
+    const sorted = Array.from(days).sort();
+    sorted.forEach((d) => { hourlyMap[d] = 0; });
   }
-  recentLogs.forEach((l) => {
-    const label = l.timestamp.slice(0, 13);
+
+  filteredLogs.forEach((l) => {
+    const label = period === '1d' ? l.timestamp.slice(0, 13) : l.timestamp.slice(0, 10);
     if (label in hourlyMap) hourlyMap[label]++;
   });
 
   // Model breakdown
   const modelMap: Record<string, { count: number; tokens: number }> = {};
-  recentLogs.forEach((l) => {
+  filteredLogs.forEach((l) => {
     if (!modelMap[l.model]) modelMap[l.model] = { count: 0, tokens: 0 };
     modelMap[l.model].count++;
     modelMap[l.model].tokens += l.totalTokens;
@@ -335,14 +361,14 @@ export async function getStats(): Promise<UsageStats> {
     totalCost: totalCostFromLogs,
     activeKeys: keys.filter((k) => k.enabled).length,
     totalKeys: keys.length,
-    requestsLast24h: recentLogs.length,
-    tokensLast24h: recentLogs.reduce((a, l) => a + l.totalTokens, 0),
-    costLast24h: recentLogs.reduce((a, l) => a + (l.cost || 0), 0),
+    requestsLast24h: filteredLogs.length,
+    tokensLast24h: filteredLogs.reduce((a, l) => a + l.totalTokens, 0),
+    costLast24h: filteredLogs.reduce((a, l) => a + (l.cost || 0), 0),
     topKeys: keys
       .sort((a, b) => b.requestCount - a.requestCount)
       .slice(0, 5)
       .map((k) => ({ name: k.name, key: k.key, requests: k.requestCount, tokens: k.totalTokens, cost: k.totalCost })),
-    recentActivity: globalLog.slice(0, 20),
+    recentActivity: filteredLogs.slice(0, 20),
     hourlyRequests: Object.entries(hourlyMap).map(([hour, count]) => ({ hour, count })),
     modelBreakdown: Object.entries(modelMap)
       .map(([model, data]) => ({ model, ...data }))
