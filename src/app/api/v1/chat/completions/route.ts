@@ -61,17 +61,7 @@ export async function POST(req: NextRequest) {
     const isStream = contentType.includes('text/event-stream');
 
     if (isStream) {
-      const { recordUsage } = await import('@/lib/key-store');
-      await recordUsage(userKey, {
-        model,
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        latencyMs,
-        status: upstreamResp.status,
-        endpoint: '/v1/chat/completions',
-      });
-
+      // Don't record streaming requests (can't parse usage from stream)
       return new NextResponse(upstreamResp.body, {
         status: upstreamResp.status,
         headers: {
