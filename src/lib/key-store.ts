@@ -71,8 +71,10 @@ async function getRedis() {
 const memStore: Map<string, ApiKey> = new Map();
 const memGlobalLog: UsageLog[] = [];
 
-// Fixed default key (persists across cold starts)
+// Fixed default keys (persists across cold starts)
 const DEFAULT_KEY = 'clovie-default-000000000000000000000000';
+const LIVE_KEY = 'ogw_live_09125c91532b77ed26a25d9ab4e606ad';
+
 const defaultApiKey: ApiKey = {
   key: DEFAULT_KEY,
   name: 'Default Key',
@@ -87,13 +89,32 @@ const defaultApiKey: ApiKey = {
 };
 memStore.set(DEFAULT_KEY, defaultApiKey);
 
+const liveApiKey: ApiKey = {
+  key: LIVE_KEY,
+  name: 'Primary',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  lastUsed: null,
+  requestCount: 0,
+  totalTokens: 0,
+  totalCost: 0,
+  enabled: true,
+  rateLimit: 0,
+  usageLog: [],
+};
+memStore.set(LIVE_KEY, liveApiKey);
+
 // Also seed to Redis if available (async, fire-and-forget)
 getRedis().then(async (r) => {
   if (r) {
-    const existing = await redisGetKey(DEFAULT_KEY);
-    if (!existing) {
+    const existingDefault = await redisGetKey(DEFAULT_KEY);
+    if (!existingDefault) {
       await redisSetKey(defaultApiKey);
       console.log('[key-store] Seeded default key to Redis');
+    }
+    const existingLive = await redisGetKey(LIVE_KEY);
+    if (!existingLive) {
+      await redisSetKey(liveApiKey);
+      console.log('[key-store] Seeded live key to Redis');
     }
   }
 }).catch(() => {});
