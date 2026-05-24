@@ -26,6 +26,7 @@ interface UsageLog {
   status: number;
   endpoint: string;
   cost: number;
+  keyName?: string;
 }
 
 interface Stats {
@@ -383,7 +384,7 @@ export default function Dashboard() {
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-center">
                           <span className="text-[11px] sm:text-xs text-slate-300 font-mono truncate">{m.model}</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 ml-2">{m.count} req</span>
+                          <span className="text-[10px] sm:text-xs text-slate-500 ml-2">{fmtNum(m.count)} req</span>
                         </div>
                         <div className="mt-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
                           <div className="h-full bg-emerald-500/40 rounded-full transition-all duration-700"
@@ -462,7 +463,7 @@ export default function Dashboard() {
                   <div key={i} className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs py-1">
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.status === 200 ? 'bg-green-500' : 'bg-red-500'}`} />
                     <span className="text-slate-500 w-12 sm:w-16">{fmtTime(a.timestamp)}</span>
-                    <span className="text-slate-400 font-mono truncate flex-1">{a.model}</span>
+                    <span className="text-slate-400 font-mono truncate flex-1">{a.model}{a.keyName ? ` (${a.keyName})` : ''}</span>
                     <span className="text-slate-600 hidden sm:inline">{fmtLatency(a.latencyMs)}</span>
                     <span className="text-slate-600">{fmtNum(a.totalTokens)} tok</span>
                     <span className="text-amber-400/70 font-mono hidden sm:inline">${(a.cost || 0).toFixed(6)}</span>
@@ -749,7 +750,7 @@ export default function Dashboard() {
                                 {a.status}
                               </span>
                             </td>
-                            <td className="px-5 py-2 text-slate-400 font-mono max-w-[200px] truncate">{a.model}</td>
+                            <td className="px-5 py-2 text-slate-400 font-mono max-w-[200px] truncate">{a.model}{a.keyName ? ` (${a.keyName})` : ''}</td>
                             <td className="px-5 py-2 text-right text-slate-400 font-mono">{fmtNum(a.promptTokens)}</td>
                             <td className="px-5 py-2 text-right text-slate-400 font-mono">{fmtNum(a.completionTokens)}</td>
                             <td className="px-5 py-2 text-right text-slate-300 font-mono font-medium">{fmtNum(a.totalTokens)}</td>
@@ -772,7 +773,7 @@ export default function Dashboard() {
                           </div>
                           <span className="text-[10px] text-amber-400/80 font-mono">${(a.cost || 0).toFixed(6)}</span>
                         </div>
-                        <p className="text-[10px] text-slate-400 font-mono truncate mt-1">{a.model}</p>
+                        <p className="text-[10px] text-slate-400 font-mono truncate mt-1">{a.model}{a.keyName ? ` (${a.keyName})` : ''}</p>
                         <div className="flex items-center gap-3 mt-1 text-[9px] text-slate-500">
                           <span>{fmtNum(a.promptTokens)} in</span>
                           <span>{fmtNum(a.completionTokens)} out</span>

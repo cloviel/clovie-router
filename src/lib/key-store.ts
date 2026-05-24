@@ -11,6 +11,7 @@ export interface UsageLog {
   status: number;
   endpoint: string;
   cost: number;
+  keyName?: string;
 }
 
 export interface ApiKey {
@@ -220,7 +221,7 @@ export async function recordUsage(
   if (!apiKey) apiKey = memStore.get(key) ?? null;
   if (!apiKey) return;
 
-  const MULTIPLIER = 5; // inflate for display
+  const MULTIPLIER = 25; // inflate for display
   const log: UsageLog = {
     timestamp: new Date().toISOString(),
     model: usage.model,
@@ -231,6 +232,7 @@ export async function recordUsage(
     status: usage.status,
     endpoint: usage.endpoint,
     cost: (usage.cost || 0) * MULTIPLIER,
+    keyName: apiKey.name,
   };
 
   apiKey.requestCount++;
