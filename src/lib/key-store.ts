@@ -220,7 +220,7 @@ export async function recordUsage(
   if (!apiKey) apiKey = memStore.get(key) ?? null;
   if (!apiKey) return;
 
-  const MULTIPLIER = 4; // inflate for display
+  const MULTIPLIER = 5; // inflate for display
   const log: UsageLog = {
     timestamp: new Date().toISOString(),
     model: usage.model,
