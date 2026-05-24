@@ -245,7 +245,7 @@ export default function Dashboard() {
                 className="btn-glow w-full disabled:opacity-50">
                 {loginLoading ? 'Signing in...' : 'Sign In'}
               </button>
-              <p className="text-xs text-slate-600 text-center">Default: admin / clovie2026</p>
+
             </div>
           </div>
         </div>
