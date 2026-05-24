@@ -22,8 +22,8 @@ export interface ApiKey {
   totalTokens: number;
   totalCost: number;
   enabled: boolean;
-  rateLimit: number; // requests per minute, 0 = unlimited
-  usageLog: UsageLog[]; // last 100 requests
+  rateLimit: number;
+  usageLog: UsageLog[];
 }
 
 export interface UsageStats {
@@ -41,13 +41,38 @@ export interface UsageStats {
   modelBreakdown: { model: string; count: number; tokens: number }[];
 }
 
-// In-memory store
-const store: Map<string, ApiKey> = new Map();
-const globalUsageLog: UsageLog[] = []; // last 500 globally
+// ─── Redis (Upstash) or In-Memory fallback ───
+let redis: any = null;
+let useRedis = false;
 
-// Seed a default key
+async function getRedis() {
+  if (redis !== null) return useRedis ? redis : null;
+  try {
+    if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+      const { Redis } = await import('@upstash/redis');
+      redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN,
+      });
+      useRedis = true;
+      console.log('[key-store] Using Upstash Redis');
+      return redis;
+    }
+  } catch (e) {
+    console.warn('[key-store] Redis init failed, using in-memory:', e);
+  }
+  redis = undefined; // sentinel: tried and failed
+  console.log('[key-store] Using in-memory store');
+  return null;
+}
+
+// ─── In-memory fallback ───
+const memStore: Map<string, ApiKey> = new Map();
+const memGlobalLog: UsageLog[] = [];
+
+// Seed default key in memory
 const DEFAULT_KEY = 'clovie-' + randomBytes(24).toString('hex');
-store.set(DEFAULT_KEY, {
+memStore.set(DEFAULT_KEY, {
   key: DEFAULT_KEY,
   name: 'Default Key',
   createdAt: new Date().toISOString(),
@@ -60,7 +85,63 @@ store.set(DEFAULT_KEY, {
   usageLog: [],
 });
 
-export function generateKey(name: string, rateLimit: number = 0): ApiKey {
+// ─── Redis helpers ───
+const KEYS_SET = 'clovie:keys';
+const GLOBAL_LOG = 'clovie:global_log';
+
+async function redisGetKey(key: string): Promise<ApiKey | undefined> {
+  const r = await getRedis();
+  if (!r) return undefined;
+  const data = await r.get(`clovie:key:${key}`);
+  return data as ApiKey | undefined;
+}
+
+async function redisSetKey(apiKey: ApiKey): Promise<void> {
+  const r = await getRedis();
+  if (!r) return;
+  await r.set(`clovie:key:${apiKey.key}`, JSON.stringify(apiKey));
+  await r.sadd(KEYS_SET, apiKey.key);
+}
+
+async function redisDeleteKey(key: string): Promise<boolean> {
+  const r = await getRedis();
+  if (!r) return false;
+  const existed = await r.exists(`clovie:key:${key}`);
+  await r.del(`clovie:key:${key}`);
+  await r.srem(KEYS_SET, key);
+  return existed === 1;
+}
+
+async function redisListKeys(): Promise<ApiKey[]> {
+  const r = await getRedis();
+  if (!r) return [];
+  const keys = await r.smembers(KEYS_SET);
+  if (!keys || keys.length === 0) return [];
+  const pipeline = r.pipeline();
+  for (const k of keys) {
+    pipeline.get(`clovie:key:${k}`);
+  }
+  const results = await pipeline.exec();
+  return (results || []).filter(Boolean) as ApiKey[];
+}
+
+async function redisAddGlobalLog(log: UsageLog): Promise<void> {
+  const r = await getRedis();
+  if (!r) return;
+  await r.lpush(GLOBAL_LOG, JSON.stringify(log));
+  await r.ltrim(GLOBAL_LOG, 0, 499); // keep last 500
+}
+
+async function redisGetGlobalLog(): Promise<UsageLog[]> {
+  const r = await getRedis();
+  if (!r) return [];
+  const logs = await r.lrange(GLOBAL_LOG, 0, 499);
+  return (logs || []).map((l: string) => typeof l === 'string' ? JSON.parse(l) : l);
+}
+
+// ─── Public API ───
+
+export async function generateKey(name: string, rateLimit: number = 0): Promise<ApiKey> {
   const key = 'clovie-' + randomBytes(24).toString('hex');
   const apiKey: ApiKey = {
     key,
@@ -74,12 +155,19 @@ export function generateKey(name: string, rateLimit: number = 0): ApiKey {
     rateLimit,
     usageLog: [],
   };
-  store.set(key, apiKey);
+
+  const r = await getRedis();
+  if (r) {
+    await redisSetKey(apiKey);
+  } else {
+    memStore.set(key, apiKey);
+  }
   return apiKey;
 }
 
-export function validateKey(key: string): boolean {
-  const apiKey = store.get(key);
+export async function validateKey(key: string): Promise<boolean> {
+  const r = await getRedis();
+  const apiKey = r ? await redisGetKey(key) : memStore.get(key);
   if (!apiKey || !apiKey.enabled) return false;
 
   // Rate limit check
@@ -92,10 +180,11 @@ export function validateKey(key: string): boolean {
   }
 
   apiKey.lastUsed = new Date().toISOString();
+  if (r) await redisSetKey(apiKey);
   return true;
 }
 
-export function recordUsage(
+export async function recordUsage(
   key: string,
   usage: {
     model: string;
@@ -108,7 +197,8 @@ export function recordUsage(
     cost?: number;
   }
 ) {
-  const apiKey = store.get(key);
+  const r = await getRedis();
+  const apiKey = r ? await redisGetKey(key) : memStore.get(key);
   if (!apiKey) return;
 
   const log: UsageLog = {
@@ -130,42 +220,59 @@ export function recordUsage(
   apiKey.usageLog.unshift(log);
   if (apiKey.usageLog.length > 100) apiKey.usageLog.pop();
 
-  globalUsageLog.unshift(log);
-  if (globalUsageLog.length > 500) globalUsageLog.pop();
+  if (r) {
+    await redisSetKey(apiKey);
+    await redisAddGlobalLog(log);
+  } else {
+    memGlobalLog.unshift(log);
+    if (memGlobalLog.length > 500) memGlobalLog.pop();
+  }
 }
 
-export function revokeKey(key: string): boolean {
-  return store.delete(key);
+export async function revokeKey(key: string): Promise<boolean> {
+  const r = await getRedis();
+  if (r) return await redisDeleteKey(key);
+  return memStore.delete(key);
 }
 
-export function toggleKey(key: string): ApiKey | null {
-  const apiKey = store.get(key);
+export async function toggleKey(key: string): Promise<ApiKey | null> {
+  const r = await getRedis();
+  const apiKey = r ? await redisGetKey(key) : memStore.get(key);
   if (!apiKey) return null;
   apiKey.enabled = !apiKey.enabled;
+  if (r) await redisSetKey(apiKey);
   return apiKey;
 }
 
-export function updateKeyRateLimit(key: string, rateLimit: number): ApiKey | null {
-  const apiKey = store.get(key);
+export async function updateKeyRateLimit(key: string, rateLimit: number): Promise<ApiKey | null> {
+  const r = await getRedis();
+  const apiKey = r ? await redisGetKey(key) : memStore.get(key);
   if (!apiKey) return null;
   apiKey.rateLimit = rateLimit;
+  if (r) await redisSetKey(apiKey);
   return apiKey;
 }
 
-export function listKeys(): ApiKey[] {
-  return Array.from(store.values());
+export async function listKeys(): Promise<ApiKey[]> {
+  const r = await getRedis();
+  if (r) return await redisListKeys();
+  return Array.from(memStore.values());
 }
 
-export function getKey(key: string): ApiKey | undefined {
-  return store.get(key);
+export async function getKey(key: string): Promise<ApiKey | undefined> {
+  const r = await getRedis();
+  if (r) return await redisGetKey(key) ?? undefined;
+  return memStore.get(key);
 }
 
-export function getStats(): UsageStats {
-  const keys = Array.from(store.values());
+export async function getStats(): Promise<UsageStats> {
+  const r = await getRedis();
+  const keys = r ? await redisListKeys() : Array.from(memStore.values());
+  const globalLog = r ? await redisGetGlobalLog() : [...memGlobalLog];
   const now = Date.now();
   const h24 = now - 86400000;
 
-  const recentLogs = globalUsageLog.filter(
+  const recentLogs = globalLog.filter(
     (l) => new Date(l.timestamp).getTime() > h24
   );
 
@@ -173,7 +280,7 @@ export function getStats(): UsageStats {
   const hourlyMap: Record<string, number> = {};
   for (let i = 23; i >= 0; i--) {
     const d = new Date(now - i * 3600000);
-    const label = d.toISOString().slice(0, 13); // "2026-05-24T15"
+    const label = d.toISOString().slice(0, 13);
     hourlyMap[label] = 0;
   }
   recentLogs.forEach((l) => {
@@ -189,9 +296,9 @@ export function getStats(): UsageStats {
     modelMap[l.model].tokens += l.totalTokens;
   });
 
-  const totalCostFromLogs = globalUsageLog.reduce((a, l) => a + (l.cost || 0), 0);
-  const totalRequestsFromLogs = globalUsageLog.length;
-  const totalTokensFromLogs = globalUsageLog.reduce((a, l) => a + l.totalTokens, 0);
+  const totalCostFromLogs = globalLog.reduce((a, l) => a + (l.cost || 0), 0);
+  const totalRequestsFromLogs = globalLog.length;
+  const totalTokensFromLogs = globalLog.reduce((a, l) => a + l.totalTokens, 0);
 
   return {
     totalRequests: totalRequestsFromLogs,
@@ -206,7 +313,7 @@ export function getStats(): UsageStats {
       .sort((a, b) => b.requestCount - a.requestCount)
       .slice(0, 5)
       .map((k) => ({ name: k.name, key: k.key, requests: k.requestCount, tokens: k.totalTokens, cost: k.totalCost })),
-    recentActivity: globalUsageLog.slice(0, 20),
+    recentActivity: globalLog.slice(0, 20),
     hourlyRequests: Object.entries(hourlyMap).map(([hour, count]) => ({ hour, count })),
     modelBreakdown: Object.entries(modelMap)
       .map(([model, data]) => ({ model, ...data }))

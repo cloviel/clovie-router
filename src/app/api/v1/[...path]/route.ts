@@ -59,7 +59,7 @@ async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
 
     const userKey = authHeader.replace('Bearer ', '');
     const { validateKey } = await import('@/lib/key-store');
-    if (!validateKey(userKey)) {
+    if (!(await validateKey(userKey))) {
       return NextResponse.json(
         { error: { message: 'Invalid or disabled API key' } },
         { status: 401 }

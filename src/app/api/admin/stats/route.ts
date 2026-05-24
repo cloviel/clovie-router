@@ -7,6 +7,6 @@ export async function GET(req: NextRequest) {
   }
 
   const { getStats } = await import('@/lib/key-store');
-  const stats = getStats();
+  const stats = await getStats();
   return NextResponse.json(stats);
 }

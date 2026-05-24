@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     userKey = authHeader.replace('Bearer ', '');
     const { validateKey } = await import('@/lib/key-store');
-    if (!validateKey(userKey)) {
+    if (!(await validateKey(userKey))) {
       return NextResponse.json(
         { error: { message: 'Invalid or disabled API key', type: 'auth_error' } },
         { status: 401 }
@@ -61,9 +61,8 @@ export async function POST(req: NextRequest) {
     const isStream = contentType.includes('text/event-stream');
 
     if (isStream) {
-      // For streaming, record usage after stream ends
       const { recordUsage } = await import('@/lib/key-store');
-      recordUsage(userKey, {
+      await recordUsage(userKey, {
         model,
         promptTokens: 0,
         completionTokens: 0,
@@ -87,7 +86,6 @@ export async function POST(req: NextRequest) {
     const data = await upstreamResp.text();
     const latency = Date.now() - startTime;
 
-    // Parse usage from response
     let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     try {
       const parsed = JSON.parse(data);
@@ -95,16 +93,14 @@ export async function POST(req: NextRequest) {
       if (parsed.model) model = parsed.model;
     } catch { /* ignore */ }
 
-    // Calculate cost (per 1M tokens)
     const baseModel = model.replace('xiaomi/', '').replace(/-\d{8}$/, '');
     const pricing = MODEL_PRICING[baseModel];
     const cost = pricing
       ? (usage.prompt_tokens * pricing.input + usage.completion_tokens * pricing.output) / 1_000_000
       : 0;
 
-    // Record usage
     const { recordUsage } = await import('@/lib/key-store');
-    recordUsage(userKey, {
+    await recordUsage(userKey, {
       model,
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
@@ -125,10 +121,9 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Proxy error';
 
-    // Record failed usage
     if (userKey) {
       const { recordUsage } = await import('@/lib/key-store');
-      recordUsage(userKey, {
+      await recordUsage(userKey, {
         model: 'unknown',
         promptTokens: 0,
         completionTokens: 0,
