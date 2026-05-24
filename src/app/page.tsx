@@ -375,41 +375,78 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Top keys + recent activity */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-              <div className="glass-card p-4 sm:p-5 stagger-in" style={{ animationDelay: '0.5s' }}>
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Top Keys</h3>
-                <div className="space-y-2">
-                  {stats?.topKeys.map((k, i) => (
-                    <div key={k.name} className="flex items-center justify-between py-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-600 w-4">{i + 1}</span>
-                        <span className="text-xs sm:text-sm text-slate-300 truncate max-w-[120px] sm:max-w-none">{k.name}</span>
+            {/* Per-Key Stats */}
+            <div className="stagger-in" style={{ animationDelay: '0.5s' }}>
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Per-Key Stats</h3>
+              {keys.length === 0 ? (
+                <div className="glass-card p-8 text-center text-slate-600 text-sm">No keys yet</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {keys.map((k, idx) => {
+                    const keyLogs = stats?.recentActivity.filter(a => {
+                      // match by model since we don't have key in usage log — use key's own stats instead
+                      return true;
+                    }) || [];
+                    const isActive = k.enabled;
+                    return (
+                      <div key={k.key} className="glass-card p-4 hover:bg-white/[0.04] transition-colors" style={{ animationDelay: `${0.5 + idx * 0.05}s` }}>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-green-500 shadow-sm shadow-green-500/50' : 'bg-red-500'}`} />
+                            <span className="text-sm font-medium text-white truncate">{k.name}</span>
+                          </div>
+                          {k.rateLimit > 0 && (
+                            <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">{k.rateLimit}/min</span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-black/20 rounded-lg p-2">
+                            <p className="text-[9px] text-slate-600 uppercase">Requests</p>
+                            <p className="text-base font-mono text-emerald-400">{fmtNum(k.requestCount)}</p>
+                          </div>
+                          <div className="bg-black/20 rounded-lg p-2">
+                            <p className="text-[9px] text-slate-600 uppercase">Tokens</p>
+                            <p className="text-base font-mono text-purple-400">{fmtNum(k.totalTokens)}</p>
+                          </div>
+                          <div className="bg-black/20 rounded-lg p-2">
+                            <p className="text-[9px] text-slate-600 uppercase">Cost</p>
+                            <p className="text-base font-mono text-amber-400">${k.totalCost.toFixed(4)}</p>
+                          </div>
+                          <div className="bg-black/20 rounded-lg p-2">
+                            <p className="text-[9px] text-slate-600 uppercase">Last Used</p>
+                            <p className="text-xs font-mono text-slate-400 mt-0.5">{k.lastUsed ? fmtTime(k.lastUsed) : '—'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-white/5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-slate-600 font-mono truncate flex-1">{k.key.slice(0, 20)}...</span>
+                            <button onClick={() => copy('k-' + k.key, k.key)} className="text-[9px] text-emerald-400 hover:text-emerald-300">
+                              {copiedField === 'k-' + k.key ? '✓' : 'Copy'}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 sm:gap-4 text-[10px] sm:text-xs text-slate-500">
-                        <span>{fmtNum(k.requests)} req</span>
-                        <span className="hidden sm:inline">{fmtNum(k.tokens)} tok</span>
-                        <span className="text-amber-400/70">${k.cost.toFixed(6)}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-              </div>
-              <div className="glass-card p-4 sm:p-5 stagger-in" style={{ animationDelay: '0.6s' }}>
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Recent Activity</h3>
-                <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {stats?.recentActivity.slice(0, 10).map((a, i) => (
-                    <div key={i} className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs py-1">
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.status === 200 ? 'bg-green-500' : 'bg-red-500'}`} />
-                      <span className="text-slate-500 w-12 sm:w-16">{fmtTime(a.timestamp)}</span>
-                      <span className="text-slate-400 font-mono truncate flex-1">{a.model}</span>
-                      <span className="text-slate-600 hidden sm:inline">{fmtLatency(a.latencyMs)}</span>
-                      <span className="text-slate-600">{fmtNum(a.totalTokens)} tok</span>
-                      <span className="text-amber-400/70 font-mono hidden sm:inline">${(a.cost || 0).toFixed(6)}</span>
-                    </div>
-                  ))}
-                  {(!stats || stats.recentActivity.length === 0) && <p className="text-xs text-slate-600 text-center py-4">No activity yet</p>}
-                </div>
+              )}
+            </div>
+
+            {/* Recent Activity */}
+            <div className="glass-card p-4 sm:p-5 stagger-in" style={{ animationDelay: '0.6s' }}>
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">Recent Activity</h3>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {stats?.recentActivity.slice(0, 10).map((a, i) => (
+                  <div key={i} className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs py-1">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.status === 200 ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <span className="text-slate-500 w-12 sm:w-16">{fmtTime(a.timestamp)}</span>
+                    <span className="text-slate-400 font-mono truncate flex-1">{a.model}</span>
+                    <span className="text-slate-600 hidden sm:inline">{fmtLatency(a.latencyMs)}</span>
+                    <span className="text-slate-600">{fmtNum(a.totalTokens)} tok</span>
+                    <span className="text-amber-400/70 font-mono hidden sm:inline">${(a.cost || 0).toFixed(6)}</span>
+                  </div>
+                ))}
+                {(!stats || stats.recentActivity.length === 0) && <p className="text-xs text-slate-600 text-center py-4">No activity yet</p>}
               </div>
             </div>
           </>}
