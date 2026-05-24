@@ -48,14 +48,14 @@ let useRedis = false;
 async function getRedis() {
   if (redis !== null) return useRedis ? redis : null;
   try {
-    if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    // Support both Vercel KV and Upstash env vars
+    const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (url && token) {
       const { Redis } = await import('@upstash/redis');
-      redis = new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN,
-      });
+      redis = new Redis({ url, token });
       useRedis = true;
-      console.log('[key-store] Using Upstash Redis');
+      console.log('[key-store] Using Redis (Vercel KV / Upstash)');
       return redis;
     }
   } catch (e) {
@@ -105,7 +105,9 @@ async function redisGetKey(key: string): Promise<ApiKey | undefined> {
   const r = await getRedis();
   if (!r) return undefined;
   const data = await r.get(`clovie:key:${key}`);
-  return data as ApiKey | undefined;
+  if (!data) return undefined;
+  // Parse JSON string if needed
+  return typeof data === 'string' ? JSON.parse(data) : data;
 }
 
 async function redisSetKey(apiKey: ApiKey): Promise<void> {
@@ -134,7 +136,9 @@ async function redisListKeys(): Promise<ApiKey[]> {
     pipeline.get(`clovie:key:${k}`);
   }
   const results = await pipeline.exec();
-  return (results || []).filter(Boolean) as ApiKey[];
+  return (results || [])
+    .filter(Boolean)
+    .map((data: any) => typeof data === 'string' ? JSON.parse(data) : data);
 }
 
 async function redisAddGlobalLog(log: UsageLog): Promise<void> {
