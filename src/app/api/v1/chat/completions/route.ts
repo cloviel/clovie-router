@@ -61,7 +61,26 @@ export async function POST(req: NextRequest) {
     const isStream = contentType.includes('text/event-stream');
 
     if (isStream) {
-      // Don't record streaming requests (can't parse usage from stream)
+      // Log streaming requests too (estimate tokens from request body)
+      let promptEstimate = 0;
+      try {
+        const parsed = JSON.parse(body);
+        const msgs = parsed.messages || [];
+        promptEstimate = msgs.reduce((acc: number, m: { content?: string }) => acc + (m.content?.length || 0), 0) / 4;
+      } catch { /* ignore */ }
+
+      const { recordUsage } = await import('@/lib/key-store');
+      recordUsage(userKey, {
+        model,
+        promptTokens: Math.round(promptEstimate),
+        completionTokens: 0,
+        totalTokens: Math.round(promptEstimate),
+        latencyMs: Date.now() - startTime,
+        status: upstreamResp.status,
+        endpoint: '/v1/chat/completions',
+        cost: 0,
+      }).catch(() => {});
+
       return new NextResponse(upstreamResp.body, {
         status: upstreamResp.status,
         headers: {

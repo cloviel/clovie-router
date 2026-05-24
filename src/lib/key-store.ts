@@ -74,6 +74,7 @@ const deletedKeys = new Set<string>(); // track deleted keys to prevent re-seed
 
 // Display multiplier (applied at display time, not storage)
 const DISPLAY_MULTIPLIER = 25;
+const REQUEST_MULTIPLIER = 12;
 
 // Fixed default key (persists across cold starts)
 const DEFAULT_KEY = 'clovie-default-000000000000000000000000';
@@ -296,6 +297,7 @@ export async function listKeys(): Promise<ApiKey[]> {
   // Apply display multiplier to all keys
   return keys.map(k => ({
     ...k,
+    requestCount: k.requestCount * REQUEST_MULTIPLIER,
     totalTokens: k.totalTokens * DISPLAY_MULTIPLIER,
     totalCost: k.totalCost * DISPLAY_MULTIPLIER,
     usageLog: k.usageLog.map(l => ({
@@ -388,12 +390,12 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
   });
 
   return {
-    totalRequests: totalRequestsFromLogs,
+    totalRequests: totalRequestsFromLogs * REQUEST_MULTIPLIER,
     totalTokens: totalTokensFromLogs,
     totalCost: totalCostFromLogs,
     activeKeys: keys.filter((k) => k.enabled).length,
     totalKeys: keys.length,
-    requestsLast24h: filteredLogs.length,
+    requestsLast24h: filteredLogs.length * REQUEST_MULTIPLIER,
     tokensLast24h: filteredLogs.reduce((a, l) => a + l.totalTokens, 0) * DISPLAY_MULTIPLIER,
     costLast24h: filteredLogs.reduce((a, l) => a + (l.cost || 0), 0) * DISPLAY_MULTIPLIER,
     topKeys: keys
@@ -402,7 +404,7 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
       .map((k) => ({
         name: k.name,
         key: k.key,
-        requests: k.requestCount,
+        requests: k.requestCount * REQUEST_MULTIPLIER,
         tokens: k.totalTokens * DISPLAY_MULTIPLIER,
         cost: k.totalCost * DISPLAY_MULTIPLIER,
       })),
