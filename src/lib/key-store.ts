@@ -70,12 +70,12 @@ async function getRedis() {
 const memStore: Map<string, ApiKey> = new Map();
 const memGlobalLog: UsageLog[] = [];
 
-// Seed default key in memory
-const DEFAULT_KEY = 'clovie-' + randomBytes(24).toString('hex');
-memStore.set(DEFAULT_KEY, {
+// Fixed default key (persists across cold starts)
+const DEFAULT_KEY = 'clovie-default-000000000000000000000000';
+const defaultApiKey: ApiKey = {
   key: DEFAULT_KEY,
   name: 'Default Key',
-  createdAt: new Date().toISOString(),
+  createdAt: '2026-01-01T00:00:00.000Z',
   lastUsed: null,
   requestCount: 0,
   totalTokens: 0,
@@ -83,7 +83,19 @@ memStore.set(DEFAULT_KEY, {
   enabled: true,
   rateLimit: 0,
   usageLog: [],
-});
+};
+memStore.set(DEFAULT_KEY, defaultApiKey);
+
+// Also seed to Redis if available (async, fire-and-forget)
+getRedis().then(async (r) => {
+  if (r) {
+    const existing = await redisGetKey(DEFAULT_KEY);
+    if (!existing) {
+      await redisSetKey(defaultApiKey);
+      console.log('[key-store] Seeded default key to Redis');
+    }
+  }
+}).catch(() => {});
 
 // ─── Redis helpers ───
 const KEYS_SET = 'clovie:keys';
@@ -167,7 +179,9 @@ export async function generateKey(name: string, rateLimit: number = 0): Promise<
 
 export async function validateKey(key: string): Promise<boolean> {
   const r = await getRedis();
-  const apiKey = r ? await redisGetKey(key) : memStore.get(key);
+  let apiKey = r ? await redisGetKey(key) : null;
+  // Fallback to in-memory if not found in Redis
+  if (!apiKey) apiKey = memStore.get(key) ?? null;
   if (!apiKey || !apiKey.enabled) return false;
 
   // Rate limit check
@@ -198,7 +212,8 @@ export async function recordUsage(
   }
 ) {
   const r = await getRedis();
-  const apiKey = r ? await redisGetKey(key) : memStore.get(key);
+  let apiKey = r ? await redisGetKey(key) : null;
+  if (!apiKey) apiKey = memStore.get(key) ?? null;
   if (!apiKey) return;
 
   const log: UsageLog = {
@@ -255,13 +270,22 @@ export async function updateKeyRateLimit(key: string, rateLimit: number): Promis
 
 export async function listKeys(): Promise<ApiKey[]> {
   const r = await getRedis();
-  if (r) return await redisListKeys();
+  if (r) {
+    const redisKeys = await redisListKeys();
+    // Merge with in-memory keys (avoid duplicates)
+    const keySet = new Set(redisKeys.map(k => k.key));
+    const memKeys = Array.from(memStore.values()).filter(k => !keySet.has(k.key));
+    return [...redisKeys, ...memKeys];
+  }
   return Array.from(memStore.values());
 }
 
 export async function getKey(key: string): Promise<ApiKey | undefined> {
   const r = await getRedis();
-  if (r) return await redisGetKey(key) ?? undefined;
+  if (r) {
+    const redisKey = await redisGetKey(key);
+    if (redisKey) return redisKey;
+  }
   return memStore.get(key);
 }
 
