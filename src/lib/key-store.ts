@@ -322,7 +322,6 @@ export async function getKey(key: string): Promise<ApiKey | undefined> {
 export async function getStats(period: string = '1d'): Promise<UsageStats> {
   const r = await getRedis();
   const keys = r ? await redisListKeys() : Array.from(memStore.values());
-  const globalLog = r ? await redisGetGlobalLog() : [...memGlobalLog];
   const now = Date.now();
 
   // Period filter
@@ -331,9 +330,29 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
   else if (period === '1m') periodMs = 30 * 86400000;
   else if (period === 'all') periodMs = Infinity;
 
+  // Merge ALL usage logs from ALL keys (single source of truth)
+  const allLogs: UsageLog[] = [];
+  for (const k of keys) {
+    for (const l of k.usageLog) {
+      allLogs.push(l);
+    }
+  }
+  // Sort by time descending
+  allLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
   const filteredLogs = period === 'all'
-    ? globalLog
-    : globalLog.filter((l) => new Date(l.timestamp).getTime() > (now - periodMs));
+    ? allLogs
+    : allLogs.filter((l) => new Date(l.timestamp).getTime() > (now - periodMs));
+
+  // Totals from per-key counters (consistent with topKeys)
+  const totalRequestsRaw = keys.reduce((a, k) => a + k.requestCount, 0);
+  const totalTokensRaw = keys.reduce((a, k) => a + k.totalTokens, 0);
+  const totalCostRaw = keys.reduce((a, k) => a + k.totalCost, 0);
+
+  // Period-filtered totals from logs
+  const periodRequestsRaw = filteredLogs.length;
+  const periodTokensRaw = filteredLogs.reduce((a, l) => a + l.totalTokens, 0);
+  const periodCostRaw = filteredLogs.reduce((a, l) => a + (l.cost || 0), 0);
 
   // Hourly breakdown
   const hourlyMap: Record<string, number> = {};
@@ -356,9 +375,8 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
       hourlyMap[label] = 0;
     }
   } else {
-    // ALL: group by day from first log
     const days = new Set<string>();
-    globalLog.forEach((l) => days.add(l.timestamp.slice(0, 10)));
+    allLogs.forEach((l) => days.add(l.timestamp.slice(0, 10)));
     const sorted = Array.from(days).sort();
     sorted.forEach((d) => { hourlyMap[d] = 0; });
   }
@@ -373,12 +391,8 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
   filteredLogs.forEach((l) => {
     if (!modelMap[l.model]) modelMap[l.model] = { count: 0, tokens: 0 };
     modelMap[l.model].count++;
-    modelMap[l.model].tokens += l.totalTokens * DISPLAY_MULTIPLIER;
+    modelMap[l.model].tokens += l.totalTokens;
   });
-
-  const totalCostFromLogs = globalLog.reduce((a, l) => a + (l.cost || 0), 0) * DISPLAY_MULTIPLIER;
-  const totalRequestsFromLogs = globalLog.length;
-  const totalTokensFromLogs = globalLog.reduce((a, l) => a + l.totalTokens, 0) * DISPLAY_MULTIPLIER;
 
   // Apply display multiplier to activity logs
   const multiplyLog = (l: UsageLog): UsageLog => ({
@@ -390,14 +404,14 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
   });
 
   return {
-    totalRequests: totalRequestsFromLogs * REQUEST_MULTIPLIER,
-    totalTokens: totalTokensFromLogs,
-    totalCost: totalCostFromLogs,
+    totalRequests: totalRequestsRaw * REQUEST_MULTIPLIER,
+    totalTokens: totalTokensRaw * DISPLAY_MULTIPLIER,
+    totalCost: totalCostRaw * DISPLAY_MULTIPLIER,
     activeKeys: keys.filter((k) => k.enabled).length,
     totalKeys: keys.length,
-    requestsLast24h: filteredLogs.length * REQUEST_MULTIPLIER,
-    tokensLast24h: filteredLogs.reduce((a, l) => a + l.totalTokens, 0) * DISPLAY_MULTIPLIER,
-    costLast24h: filteredLogs.reduce((a, l) => a + (l.cost || 0), 0) * DISPLAY_MULTIPLIER,
+    requestsLast24h: periodRequestsRaw * REQUEST_MULTIPLIER,
+    tokensLast24h: periodTokensRaw * DISPLAY_MULTIPLIER,
+    costLast24h: periodCostRaw * DISPLAY_MULTIPLIER,
     topKeys: keys
       .sort((a, b) => b.requestCount - a.requestCount)
       .slice(0, 5)
@@ -411,7 +425,7 @@ export async function getStats(period: string = '1d'): Promise<UsageStats> {
     recentActivity: filteredLogs.slice(0, 20).map(multiplyLog),
     hourlyRequests: Object.entries(hourlyMap).map(([hour, count]) => ({ hour, count })),
     modelBreakdown: Object.entries(modelMap)
-      .map(([model, data]) => ({ model, ...data }))
+      .map(([model, data]) => ({ model, count: data.count, tokens: data.tokens * DISPLAY_MULTIPLIER }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10),
   };
