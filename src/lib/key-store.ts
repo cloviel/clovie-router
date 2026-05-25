@@ -76,8 +76,9 @@ const deletedKeys = new Set<string>(); // track deleted keys to prevent re-seed
 const DISPLAY_MULTIPLIER = 16;
 const REQUEST_MULTIPLIER = 13;
 
-// Fixed default key (persists across cold starts)
+// Fixed default keys (persist across cold starts)
 const DEFAULT_KEY = 'clovie-default-000000000000000000000000';
+const PUBLIK_KEY = 'clovie-a32e5ab0ef37a3369313727b207557e8868a02c859e3fcb7';
 
 const defaultApiKey: ApiKey = {
   key: DEFAULT_KEY,
@@ -93,6 +94,20 @@ const defaultApiKey: ApiKey = {
 };
 memStore.set(DEFAULT_KEY, defaultApiKey);
 
+const publikApiKey: ApiKey = {
+  key: PUBLIK_KEY,
+  name: 'Publik',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  lastUsed: null,
+  requestCount: 0,
+  totalTokens: 0,
+  totalCost: 0,
+  enabled: true,
+  rateLimit: 0,
+  usageLog: [],
+};
+memStore.set(PUBLIK_KEY, publikApiKey);
+
 // Also seed to Redis if available (async, fire-and-forget)
 getRedis().then(async (r) => {
   if (r) {
@@ -100,6 +115,11 @@ getRedis().then(async (r) => {
     if (!existingDefault) {
       await redisSetKey(defaultApiKey);
       console.log('[key-store] Seeded default key to Redis');
+    }
+    const existingPublik = await redisGetKey(PUBLIK_KEY);
+    if (!existingPublik) {
+      await redisSetKey(publikApiKey);
+      console.log('[key-store] Seeded publik key to Redis');
     }
   }
 }).catch(() => {});
