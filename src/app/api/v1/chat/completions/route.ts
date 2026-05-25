@@ -61,12 +61,19 @@ export async function POST(req: NextRequest) {
     const isStream = contentType.includes('text/event-stream');
 
     if (isStream) {
-      // Log streaming requests too (estimate tokens from request body)
+      // Log streaming requests too (estimate tokens & cost from request body)
       let promptEstimate = 0;
+      let estimatedCost = 0;
       try {
         const parsed = JSON.parse(body);
         const msgs = parsed.messages || [];
         promptEstimate = msgs.reduce((acc: number, m: { content?: string }) => acc + (m.content?.length || 0), 0) / 4;
+        const streamModel = (parsed.model || model || '').replace('xiaomi/', '').replace(/-\d{8}$/, '');
+        const { MODEL_PRICING: mp } = await import('@/lib/model-pricing');
+        const pricing = mp[streamModel];
+        if (pricing) {
+          estimatedCost = (Math.round(promptEstimate) * pricing.input) / 1_000_000;
+        }
       } catch { /* ignore */ }
 
       const { recordUsage } = await import('@/lib/key-store');
@@ -78,7 +85,7 @@ export async function POST(req: NextRequest) {
         latencyMs: Date.now() - startTime,
         status: upstreamResp.status,
         endpoint: '/v1/chat/completions',
-        cost: 0,
+        cost: estimatedCost,
       }).catch(() => {});
 
       return new NextResponse(upstreamResp.body, {
