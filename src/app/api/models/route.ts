@@ -29,14 +29,16 @@ export async function GET() {
     const data = await resp.json();
     const rawModels = data.data || [];
 
-    // Filter: only keep mimo models, enrich with our pricing
+    // Filter: only keep mimo models (upstream sends xiaomi/mimo-* or mimo-*)
     const models = rawModels
-      .filter((m: { id: string }) => m.id.startsWith('mimo'))
+      .filter((m: { id: string }) => m.id.includes('mimo'))
       .map((m: { id: string; name?: string }) => {
-        const pricing = MODEL_PRICING[m.id];
+        // Normalize ID: strip xiaomi/ prefix for display
+        const displayId = m.id.replace(/^xiaomi\//, '');
+        const pricing = MODEL_PRICING[displayId] || MODEL_PRICING[m.id];
         return {
-          id: m.id,
-          name: m.name || m.id,
+          id: displayId,
+          name: m.name || displayId,
           context_length: pricing?.context || 0,
           architecture: { modality: pricing?.modality || 'text→text' },
           pricing: {
